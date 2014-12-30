@@ -1622,6 +1622,7 @@ int sifdefaultroute (int unit, u_int32_t ouraddr, u_int32_t gateway)
     }
 
     default_route_gateway = gateway;
+    info("Add default route to %s [%I]", rt.rt_dev, gateway);
     return 1;
 }
 

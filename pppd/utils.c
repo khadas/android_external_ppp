@@ -64,6 +64,9 @@
 #include <android/log.h>
 #endif
 
+#ifdef ANDROID
+#include <cutils/properties.h>
+#endif
 static const char rcsid[] = RCSID;
 
 #if defined(SUNOS4)
@@ -1086,3 +1089,41 @@ unlock()
     }
 }
 
+static int g_ppp_err_code = 0;
+void clear_ppp_error_code(int errcode)
+{
+	g_ppp_err_code = 0;
+}
+
+
+void set_prop_ppp_error_code(int errcode);
+void set_ppp_error_code(int errcode)
+{
+	info("set_ppp_error_code(%d)\n", errcode);
+	g_ppp_err_code = errcode;
+	set_prop_ppp_error_code(errcode);
+}
+
+int get_ppp_error_code()
+{
+	return g_ppp_err_code;
+}
+
+
+
+void set_prop_ppp_error_code(int errcode)
+{
+#define PROP_NAME_PPP_ERRCODE "net.ppp.errcode"
+
+	char prop_val_net_ppp_errcode[PROPERTY_KEY_MAX];
+	info("set_prop_ppp_error_code(%d)\n", errcode);
+
+	char str[32];
+	if (0 == errcode) {
+		sprintf(str, "%s", "0:0");
+	}
+	else {
+		sprintf(str, "%d", errcode);
+	}
+	property_set(PROP_NAME_PPP_ERRCODE, str);
+}
