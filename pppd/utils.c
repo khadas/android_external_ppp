@@ -28,8 +28,7 @@
  * OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define RCSID	"$Id: utils.c,v 1.24 2004/11/04 10:02:26 paulus Exp $"
-#define LOG_TAG "pppd"
+#define RCSID	"$Id: utils.c,v 1.25 2008/06/03 12:06:37 paulus Exp $"
 
 #include <stdio.h>
 #include <ctype.h>
@@ -60,13 +59,14 @@
 #include "fsm.h"
 #include "lcp.h"
 
-#ifdef ANDROID_CHANGES
+#ifdef __ANDROID__
 #include <android/log.h>
 #endif
 
 #ifdef ANDROID
 #include <cutils/properties.h>
 #endif
+
 static const char rcsid[] = RCSID;
 
 #if defined(SUNOS4)
@@ -76,15 +76,14 @@ extern char *strerror();
 static void logit __P((int, char *, va_list));
 static void log_write __P((int, char *));
 static void vslp_printer __P((void *, char *, ...));
-static void format_packet __P((u_char *, int, void (*) (void *, char *, ...),
-			       void *));
+static void format_packet __P((u_char *, int, printer_func, void *));
 
 struct buffer_info {
     char *ptr;
     int len;
 };
 
-#if !defined(ANDROID_CHANGES)
+#if !defined(__ANDROID__)
 
 /*
  * strlcpy - like strcpy/strncpy, doesn't overflow destination buffer,
@@ -236,10 +235,17 @@ vslprintf(buf, buflen, fmt, args)
 	    switch (c) {
 	    case 'd':
 		val = va_arg(args, long);
-                if ((long)val < 0) {
+#if defined(__ANDROID__)
+		if ((long)val < 0) {
 		    neg = 1;
-                    val = (unsigned long)(-(long)val);
+		    val = (unsigned long)(-(long)val);
 		}
+#else
+		if (val < 0) {
+		    neg = 1;
+		    val = -val;
+		}
+#endif
 		base = 10;
 		break;
 	    case 'u':
@@ -247,8 +253,8 @@ vslprintf(buf, buflen, fmt, args)
 		base = 10;
 		break;
 	    default:
-		*buf++ = '%'; --buflen;
-		*buf++ = 'l'; --buflen;
+		OUTCHAR('%');
+		OUTCHAR('l');
 		--fmt;		/* so %lz outputs %lz etc. */
 		continue;
 	    }
@@ -298,19 +304,6 @@ vslprintf(buf, buflen, fmt, args)
 		     (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
 	    str = num;
 	    break;
-#if 0	/* not used, and breaks on S/390, apparently */
-	case 'r':
-	    f = va_arg(args, char *);
-#ifndef __powerpc__
-	    n = vslprintf(buf, buflen + 1, f, va_arg(args, va_list));
-#else
-	    /* On the powerpc, a va_list is an array of 1 structure */
-	    n = vslprintf(buf, buflen + 1, f, va_arg(args, void *));
-#endif
-	    buf += n;
-	    buflen -= n;
-	    continue;
-#endif
 	case 't':
 	    time(&t);
 	    str = ctime(&t);
@@ -321,6 +314,8 @@ vslprintf(buf, buflen, fmt, args)
 	case 'q':		/* quoted string */
 	    quoted = c == 'q';
 	    p = va_arg(args, unsigned char *);
+	    if (p == NULL)
+		    p = (unsigned char *)"<NULL>";
 	    if (fillch == '0' && prec >= 0) {
 		n = prec;
 	    } else {
@@ -486,7 +481,7 @@ static void
 format_packet(p, len, printer, arg)
     u_char *p;
     int len;
-    void (*printer) __P((void *, char *, ...));
+    printer_func printer;
     void *arg;
 {
     int i, n;
@@ -538,7 +533,7 @@ static int llevel;		/* level for logging */
 
 void
 init_pr_log(prefix, level)
-     char *prefix;
+     const char *prefix;
      int level;
 {
 	linep = line;
@@ -624,7 +619,7 @@ void
 print_string(p, len, printer, arg)
     char *p;
     int len;
-    void (*printer) __P((void *, char *, ...));
+    printer_func printer;
     void *arg;
 {
     int c;
@@ -664,42 +659,18 @@ logit(level, fmt, args)
     char *fmt;
     va_list args;
 {
-    int n;
     char buf[1024];
 
-    n = vslprintf(buf, sizeof(buf), fmt, args);
+    vslprintf(buf, sizeof(buf), fmt, args);
     log_write(level, buf);
 }
-
-#ifdef ANDROID_CHANGES
-
-#if LOG_PRIMASK != 7
-#error Syslog.h has been changed! Please fix this table!
-#endif
-
-static int syslog_to_android[] = {
-    [LOG_EMERG] = ANDROID_LOG_FATAL,
-    [LOG_ALERT] = ANDROID_LOG_FATAL,
-    [LOG_CRIT] = ANDROID_LOG_FATAL,
-    [LOG_ERR] = ANDROID_LOG_ERROR,
-    [LOG_WARNING] = ANDROID_LOG_WARN,
-    [LOG_NOTICE] = ANDROID_LOG_INFO,
-    [LOG_INFO] = ANDROID_LOG_INFO,
-    [LOG_DEBUG] = ANDROID_LOG_DEBUG,
-};
-
-#endif
 
 static void
 log_write(level, buf)
     int level;
     char *buf;
 {
-#ifndef ANDROID_CHANGES
     syslog(level, "%s", buf);
-
-    fprintf(stderr, buf);
-    
     if (log_to_fd >= 0 && (level != LOG_DEBUG || debug)) {
 	int n = strlen(buf);
 
@@ -709,9 +680,6 @@ log_write(level, buf)
 	    || write(log_to_fd, "\n", 1) != 1)
 	    log_to_fd = -1;
     }
-#else
-    __android_log_write(syslog_to_android[level], LOG_TAG, buf);
-#endif
 }
 
 /*
