@@ -1789,7 +1789,7 @@ static void
 ipcp_up(f)
     fsm *f;
 {
-    u_int32_t mask;
+    u_int32_t mask = 0;
     ipcp_options *ho = &ipcp_hisoptions[f->unit];
     ipcp_options *go = &ipcp_gotoptions[f->unit];
     ipcp_options *wo = &ipcp_wantoptions[f->unit];

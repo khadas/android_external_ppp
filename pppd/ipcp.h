@@ -94,3 +94,4 @@ extern ipcp_options ipcp_hisoptions[];
 char *ip_ntoa __P((u_int32_t));
 
 extern struct protent ipcp_protent;
+extern void setProperty_pppoe(u_int32_t ipAddr, u_int32_t mask, u_int32_t gateIp );
