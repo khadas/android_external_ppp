@@ -60,6 +60,9 @@
 #include "fsm.h"
 #include "ipcp.h"
 #include "pathnames.h"
+#ifdef ANDROID
+#include <cutils/properties.h>
+#endif
 
 static const char rcsid[] = RCSID;
 
@@ -591,7 +594,6 @@ ipcp_init(unit)
     wo->vj_protocol = IPCP_VJ_COMP;
     wo->maxslotindex = MAX_STATES - 1; /* really max index */
     wo->cflag = 1;
-
 
     /* max slots and slot-id compression are currently hardwired in */
     /* ppp_if.c to 16 and 1, this needs to be changed (among other */
@@ -1762,7 +1764,10 @@ ip_demand_conf(u)
 	return 0;
     if (wo->default_route)
 	if (sifdefaultroute(u, wo->ouraddr, wo->hisaddr))
-	    default_route_set[u] = 1;
+    {
+        default_route_set[u] = 1;
+        notice("==ssd:defaultroute%s: %I,wo->hisaddr ",ifname,wo->ouraddr,wo->hisaddr);
+    }
     if (wo->proxy_arp)
 	if (sifproxyarp(u, wo->hisaddr))
 	    proxy_arp_set[u] = 1;
@@ -1784,7 +1789,7 @@ static void
 ipcp_up(f)
     fsm *f;
 {
-    u_int32_t mask;
+    u_int32_t mask = 0;
     ipcp_options *ho = &ipcp_hisoptions[f->unit];
     ipcp_options *go = &ipcp_gotoptions[f->unit];
     ipcp_options *wo = &ipcp_wantoptions[f->unit];
@@ -1827,6 +1832,8 @@ ipcp_up(f)
 	script_setenv("DNS2", ip_ntoa(go->dnsaddr[1]), 0);
     if (usepeerdns && (go->dnsaddr[0] || go->dnsaddr[1])) {
 	script_setenv("USEPEERDNS", "1", 0);
+	notice("%s: GOT DNS %I", __FUNCTION__, go->dnsaddr[0]);
+	notice("%s: GOT DNS %I", __FUNCTION__, go->dnsaddr[1]);
 	create_resolv(go->dnsaddr[0], go->dnsaddr[1]);
     }
 
@@ -1943,6 +1950,7 @@ ipcp_up(f)
 	    notice("secondary DNS address %I", go->dnsaddr[1]);
     }
 
+    setProperty_pppoe(go->ouraddr, mask, ho->hisaddr);
     reset_link_stats(f->unit);
 
     np_up(f->unit, PPP_IP);
@@ -2106,6 +2114,13 @@ ipcp_script(script, wait)
 				      NULL, 0);
 }
 
+static const char *ipaddr_to_string(uint32_t addr)
+{
+    struct in_addr in_addr;
+
+    in_addr.s_addr = addr;
+    return inet_ntoa(in_addr);
+}
 /*
  * create_resolv - create the replacement resolv.conf file
  */
@@ -2113,6 +2128,8 @@ static void
 create_resolv(peerdns1, peerdns2)
     u_int32_t peerdns1, peerdns2;
 {
+#define PPP_IF_NAME "ppp0"
+    char dns_value[PROPERTY_VALUE_MAX];
 #if !defined(__ANDROID__)
     FILE *f;
 
@@ -2124,15 +2141,56 @@ create_resolv(peerdns1, peerdns2)
 
     if (peerdns1)
 	fprintf(f, "nameserver %s\n", ip_ntoa(peerdns1));
-
+	notice("nameserver1: %s", ip_ntoa(peerdns1);
     if (peerdns2)
 	fprintf(f, "nameserver %s\n", ip_ntoa(peerdns2));
-
+	notice("nameserver2: %s", ip_ntoa(peerdns2);
     if (ferror(f))
 	error("Write failed to %s: %m", _PATH_RESOLV);
 
     fclose(f);
+#else
+    char dns_prop_name[PROPERTY_KEY_MAX];
+    snprintf(dns_prop_name, sizeof(dns_prop_name), "dhcp.%s.dns1", PPP_IF_NAME);
+    property_set(dns_prop_name, peerdns1 ? ipaddr_to_string(peerdns1) : "");
+    property_get(dns_prop_name,dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
+    /*set net.dns1 after pppoe dial success*/
+    property_set("net.dns1", peerdns1 ? ipaddr_to_string(peerdns1) : "");
+    property_get("net.dns1",dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
+    snprintf(dns_prop_name, sizeof(dns_prop_name), "dhcp.%s.dns2", PPP_IF_NAME);
+    property_set(dns_prop_name, peerdns2 ? ipaddr_to_string(peerdns2) : "");
+    property_get(dns_prop_name,dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
+    /*set net.dns1 after pppoe dial success*/
+    property_set("net.dns2", peerdns2 ? ipaddr_to_string(peerdns2) : "");
+    property_get("net.dns2",dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
 #endif
+}
+void
+setProperty_pppoe(u_int32_t ipAddr, u_int32_t mask, u_int32_t gateIp )
+{
+#define PPP_IF_NAME "ppp0"
+
+    char dns_prop_name[PROPERTY_KEY_MAX];
+    char dns_value[PROPERTY_VALUE_MAX];
+    snprintf(dns_prop_name, sizeof(dns_prop_name), "dhcp.%s.ipaddress", PPP_IF_NAME);
+    notice("setProperty_pppoe: %s", dns_prop_name);
+    property_set(dns_prop_name, ipAddr ? ipaddr_to_string(ipAddr) : "");
+    property_get(dns_prop_name,dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
+    snprintf(dns_prop_name, sizeof(dns_prop_name), "dhcp.%s.mask", PPP_IF_NAME);
+    notice("setProperty_pppoe: %s", dns_prop_name);
+    property_set(dns_prop_name, mask ? ipaddr_to_string(mask) : "");
+    property_get(dns_prop_name,dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
+    snprintf(dns_prop_name, sizeof(dns_prop_name), "dhcp.%s.gateway", PPP_IF_NAME);
+    notice("setProperty_pppoe: %s", dns_prop_name);
+    property_set(dns_prop_name, gateIp ? ipaddr_to_string(gateIp) : "");
+    property_get(dns_prop_name,dns_value,"");
+    notice("getProperty_pppoe: %s", dns_value);
 }
 
 /*

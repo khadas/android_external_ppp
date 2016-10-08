@@ -209,6 +209,7 @@ static char loop_name[20];
 static unsigned char inbuf[512]; /* buffer for chars read from loopback */
 
 static int	if_is_up;	/* Interface has been marked up */
+static u_int32_t default_route_gateway; /* Gateway for default route added */
 static int	if6_is_up;	/* Interface has been marked up for IPv6, to help differentiate */
 static int	have_default_route;	/* Gateway for default route added */
 static u_int32_t proxy_arp_addr;	/* Addr for proxy arp entry added */
@@ -1651,6 +1652,9 @@ int sifdefaultroute (int unit, u_int32_t ouraddr, u_int32_t gateway)
 	    error("default route ioctl(SIOCADDRT): %m");
 	return 0;
     }
+
+    default_route_gateway = gateway;
+    info("Add default route to %s [%I]", rt.rt_dev, gateway);
 
     have_default_route = 1;
     return 1;
