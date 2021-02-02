@@ -60,6 +60,7 @@
 #include "fsm.h"
 #include "ipcp.h"
 #include "pathnames.h"
+#include <cutils/properties.h>
 
 static const char rcsid[] = RCSID;
 
@@ -90,7 +91,8 @@ struct notifier *ip_down_notifier = NULL;
 /* local vars */
 static int default_route_set[NUM_PPP];	/* Have set up a default route */
 static int proxy_arp_set[NUM_PPP];	/* Have created proxy arp entry */
-static bool usepeerdns;			/* Ask peer for DNS addrs */
+//static bool usepeerdns;			/* Ask peer for DNS addrs */
+static bool usepeerdns = true;          /* Ask peer for DNS addrs */
 static int ipcp_is_up;			/* have called np_up() */
 static int ipcp_is_open;		/* haven't called np_finished() */
 static bool ask_for_local;		/* request our address from peer */
@@ -250,6 +252,8 @@ static void ip_check_options __P((void));
 static int  ip_demand_conf __P((int));
 static int  ip_active_pkt __P((u_char *, int));
 static void create_resolv __P((u_int32_t, u_int32_t));
+static void ipcp_property_set __P((char *, uint32_t));
+static uint32_t fix_net_mask __P((uint32_t, uint32_t, uint32_t));
 
 struct protent ipcp_protent = {
     PPP_IPCP,
@@ -1774,6 +1778,58 @@ ip_demand_conf(u)
     return 1;
 }
 
+static void ipcp_property_set(name, addr)
+        char * name;
+        uint32_t addr;
+{
+    if(addr)
+    {
+        struct in_addr in_addr;
+        in_addr.s_addr = addr;
+
+        char property_value[PROPERTY_VALUE_MAX];
+        property_set(name,    inet_ntoa(in_addr));
+        property_get(name,property_value,"");
+        notice("ipcp_property_set %s:%s successfull", name, property_value);
+    }
+
+}
+
+
+static uint32_t fix_net_mask(addr,gw,net)
+        uint32_t addr;
+        uint32_t gw;
+        uint32_t net;
+{
+    uint32_t a_net = htonl(IN_CLASSA_NET);
+    uint32_t b_net = htonl(IN_CLASSB_NET);
+    uint32_t c_net = htonl(IN_CLASSC_NET);
+
+    if(((!addr) && (!gw)) || ((net & addr) == (net & gw))) {
+        return net;
+    }
+
+    if((0x80 & addr) != (0x80 & gw)) {
+        return 0;
+    }
+
+    if((c_net & addr) == (c_net & gw)) {
+        return c_net;
+    }
+
+    if((b_net & addr) == (b_net & gw)) {
+        return b_net;
+    }
+
+    while (a_net > 0) {
+        if ((a_net & addr) == (a_net & gw)) {
+            break;
+        }
+        a_net = (a_net << 1) & 0xff;
+    }
+    return a_net;
+}
+
 
 /*
  * ipcp_up - IPCP has come UP.
@@ -1784,7 +1840,8 @@ static void
 ipcp_up(f)
     fsm *f;
 {
-    u_int32_t mask;
+    //u_int32_t mask;
+    u_int32_t mask = 0;
     ipcp_options *ho = &ipcp_hisoptions[f->unit];
     ipcp_options *go = &ipcp_gotoptions[f->unit];
     ipcp_options *wo = &ipcp_wantoptions[f->unit];
@@ -1865,6 +1922,7 @@ ipcp_up(f)
 
 	    /* Set the interface to the new addresses */
 	    mask = GetMask(go->ouraddr);
+        mask = fix_net_mask(go->ouraddr, ho->hisaddr, mask);
 	    if (!sifaddr(f->unit, go->ouraddr, ho->hisaddr, mask)) {
 		if (debug)
 		    warn("Interface configuration failed");
@@ -1891,6 +1949,7 @@ ipcp_up(f)
 	 * Set IP addresses and (if specified) netmask.
 	 */
 	mask = GetMask(go->ouraddr);
+    mask = fix_net_mask(go->ouraddr, ho->hisaddr, mask);
 
 #if !(defined(SVR4) && (defined(SNI) || defined(__USLC__)))
 	if (!sifaddr(f->unit, go->ouraddr, ho->hisaddr, mask)) {
@@ -1942,6 +2001,9 @@ ipcp_up(f)
 	if (go->dnsaddr[1])
 	    notice("secondary DNS address %I", go->dnsaddr[1]);
     }
+    ipcp_property_set("dhcp.ppp0.ipaddress",go->ouraddr);
+    ipcp_property_set("dhcp.ppp0.mask",mask);
+    ipcp_property_set("dhcp.ppp0.gateway",ho->hisaddr);
 
     reset_link_stats(f->unit);
 
@@ -2132,6 +2194,11 @@ create_resolv(peerdns1, peerdns2)
 	error("Write failed to %s: %m", _PATH_RESOLV);
 
     fclose(f);
+#else
+    ipcp_property_set("dhcp.ppp0.dns1",peerdns1);
+    ipcp_property_set("dhcp.ppp0.dns2",peerdns2);
+    ipcp_property_set("net.dns1",peerdns1);
+    ipcp_property_set("net.dns2",peerdns2);
 #endif
 }
 
